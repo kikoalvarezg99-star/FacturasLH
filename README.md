@@ -15,7 +15,7 @@ imprimir o enviar por email.
    cliente, todas sus facturas, el resumen por tipo de IVA y los totales.
 4. Desde el programa puedes **verlo, imprimirlo, enviarlo por email** al cliente (o a quien
    quieras) y exportarlo a **Excel o CSV** si el cliente lo pide. También *Enviar a todos*.
-5. **Se actualiza solo** desdel repositorio kikoalvarezg99-star/FacturasLH de GitHub.
+5. **Se actualiza solo** desde el repositorio kikoalvarezg99-star/FacturasLH de GitHub.
 
 ## Primera instalación en el PC de la tienda
 
