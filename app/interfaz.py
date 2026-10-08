@@ -1618,8 +1618,13 @@ class DialogoActualizacion(tk.Toplevel):
 
         def fin(ruta):
             self.app.notificar("Instalando la actualización… el programa se reiniciará.", "info", 5)
-            actualizador.instalar_y_reiniciar(ruta)
-            self.app.after(800, self.app.destroy)
+            try:
+                actualizador.instalar_y_reiniciar(ruta)
+            except Exception as e:  # noqa: BLE001
+                self.b.activar(True)
+                self.app.error(f"No se pudo instalar la actualización:\n{e}\n\nDescárgala desde {self.info.pagina}")
+                return
+            self.app.after(600, actualizador.salir_para_actualizar)
 
         def fallo(e):
             self.b.activar(True)

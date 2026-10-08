@@ -49,6 +49,19 @@ jobs:
       - name: Comprobar que el programa arranca
         run: python -c "import app.interfaz, app.lector, app.informe, app.correo, app.actualizador; print('ok')"
 
+      - name: Probar el sistema de actualización (Windows)
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP "prueba actualización ñ"
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          Set-Content -Path "$tmp\viejo.exe" -Value "viejo"
+          Set-Content -Path "$tmp\nuevo.exe" -Value "nuevo"
+          $p = Start-Process python -ArgumentList '-c "import time; time.sleep(4)"' -PassThru
+          python -c "import sys; from pathlib import Path; from app.actualizador import lanzar_sustitucion; t=Path(sys.argv[1]); lanzar_sustitucion(int(sys.argv[2]), t/'nuevo.exe', t/'viejo.exe', arrancar=False).wait()" "$tmp" $p.Id
+          $c = Get-Content "$tmp\viejo.exe"
+          if ($c -ne "nuevo") { throw "La actualización no sustituyó el ejecutable" }
+          Write-Host "Actualización OK"
+
       - name: Crear FacturasLH.exe
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed

@@ -8,6 +8,7 @@ Flujo:
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -112,25 +113,34 @@ def puede_autoinstalar() -> bool:
 
 
 def instalar_y_reiniciar(nuevo_exe: Path) -> None:
-    """Lanza un .bat que sustituye el .exe en cuanto este programa se cierre."""
-    actual = Path(sys.executable)
-    bat = Path(tempfile.gettempdir()) / "FacturasLH-actualizar.bat"
-    pid = os.getpid()
-    bat.write_text(
-        "@echo off\r\n"
-        "chcp 65001 >nul\r\n"
-        ":espera\r\n"
-        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul\r\n'
-        "if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto espera)\r\n"
-        "set intentos=0\r\n"
-        ":copia\r\n"
-        f'move /Y "{nuevo_exe}" "{actual}" >nul 2>&1\r\n'
-        "if errorlevel 1 (\r\n"
-        "  set /a intentos+=1\r\n"
-        "  if %intentos% lss 15 (timeout /t 1 /nobreak >nul & goto copia)\r\n"
-        ")\r\n"
-        f'start "" "{actual}"\r\n'
-        '(goto) 2>nul & del "%~f0"\r\n',
-        encoding="utf-8")
-    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True)
+    """Sustituye el .exe en cuanto este programa se cierre y lo vuelve a abrir.
+
+    Se hace con PowerShell oculto (sin ventana negra): espera a que termine este
+    proceso, reintenta mover el .exe nuevo hasta que Windows lo libera y lo arranca.
+    """
+    import base64
+
+    lanzar_sustitucion(os.getpid(), nuevo_exe, Path(sys.executable), arrancar=True)
+
+
+def lanzar_sustitucion(pid: int, nuevo: Path, actual: Path, arrancar: bool = True) -> subprocess.Popen:
+    q = lambda p: str(p).replace("'", "''")  # noqa: E731
+    script = (
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"Wait-Process -Id {pid} -Timeout 60\n"
+        "for ($i = 0; $i -lt 90; $i++) {\n"
+        f"  try {{ Move-Item -LiteralPath '{q(nuevo)}' -Destination '{q(actual)}' -Force -ErrorAction Stop; break }}\n"
+        "  catch { Start-Sleep -Milliseconds 700 }\n"
+        "}\n"
+        + (f"Start-Process -FilePath '{q(actual)}'\n" if arrancar else "")
+    )
+    codificado = base64.b64encode(script.encode("utf-16-le")).decode()
+    flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    return subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                             "-WindowStyle", "Hidden", "-EncodedCommand", codificado],
+                            creationflags=flags, close_fds=True)
+
+
+def salir_para_actualizar() -> None:
+    """Cierra el programa del todo para que el .exe quede libre."""
+    os._exit(0)
