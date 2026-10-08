@@ -1112,8 +1112,8 @@ class PaginaConfig(Pagina):
         ttk.Checkbutton(ops, text="Revisar el correo automáticamente", variable=var("correo", "comprobar_auto", tk.BooleanVar)).pack(side="left")
         ttk.Checkbutton(ops, text="Enviarme copia oculta de cada envío", variable=var("correo", "copia_a_mi", tk.BooleanVar)).pack(side="left", padx=20)
         Boton(ops, "Probar conexión", self._probar).pack(side="left", padx=10)
-        tk.Label(f, text="Tu proveedor de correo te indica los servidores (normalmente mail.ferreterialashuertas.es, "
-                         "IMAP 993 y SMTP 465 con SSL). La contraseña se guarda cifrada en Windows.",
+        tk.Label(f, text="Tu proveedor de correo te indica los servidores (IONOS: imap.ionos.es puerto 993 y smtp.ionos.es puerto 465 con SSL; "
+                         "si no conecta, prueba imap.ionos.com y smtp.ionos.com). La contraseña se guarda cifrada en Windows.",
                  bg=C["tarjeta"], fg="#9CA3AF", font=(FUENTE, 8), wraplength=900, justify="left").grid(
             row=6, column=0, columnspan=4, sticky="w", padx=16, pady=(6, 0))
 

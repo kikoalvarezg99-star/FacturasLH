@@ -53,9 +53,9 @@ DEFAULTS = {
     },
     "correo": {
         "usuario": "contabilidad@ferreterialashuertas.es",
-        "imap_servidor": "",
+        "imap_servidor": "imap.ionos.es",
         "imap_puerto": 993,
-        "smtp_servidor": "",
+        "smtp_servidor": "smtp.ionos.es",
         "smtp_puerto": 465,
         "smtp_seguridad": "SSL",  # SSL | STARTTLS | Ninguna
         "carpeta": "Diarios",
