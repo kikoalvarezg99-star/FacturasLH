@@ -138,7 +138,22 @@ def lanzar_sustitucion(pid: int, nuevo: Path, actual: Path, arrancar: bool = Tru
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     return subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                              "-WindowStyle", "Hidden", "-EncodedCommand", codificado],
-                            creationflags=flags, close_fds=True)
+                            creationflags=flags, close_fds=True, env=entorno_limpio())
+
+
+def entorno_limpio() -> dict:
+    """Variables de entorno sin las de PyInstaller.
+
+    Si el programa nuevo hereda las variables del que se está cerrando, intenta usar
+    su carpeta temporal (_MEIxxxx), que ya se ha borrado, y falla con
+    «Failed to load Python DLL». Se quitan y se pide a PyInstaller que empiece de cero.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith(("_PYI", "_MEI", "PYINSTALLER_"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    for k in ("TCL_LIBRARY", "TK_LIBRARY"):
+        env.pop(k, None)
+    return env
 
 
 def salir_para_actualizar() -> None:

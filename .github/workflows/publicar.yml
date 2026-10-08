@@ -44,7 +44,7 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt "pyinstaller>=6.10"
 
       - name: Comprobar que el programa arranca
         run: python -c "import app.interfaz, app.lector, app.informe, app.correo, app.actualizador; print('ok')"
@@ -60,6 +60,8 @@ jobs:
           python -c "import sys; from pathlib import Path; from app.actualizador import lanzar_sustitucion; t=Path(sys.argv[1]); lanzar_sustitucion(int(sys.argv[2]), t/'nuevo.exe', t/'viejo.exe', arrancar=False).wait()" "$tmp" $p.Id
           $c = Get-Content "$tmp\viejo.exe"
           if ($c -ne "nuevo") { throw "La actualización no sustituyó el ejecutable" }
+          $env:_PYI_APPLICATION_HOME_DIR = "C:\falso"; $env:_MEIPASS2 = "C:\falso"
+          python -c "from app.actualizador import entorno_limpio as e; d=e(); assert not any(k.upper().startswith(('_PYI','_MEI')) for k in d), d; assert d['PYINSTALLER_RESET_ENVIRONMENT']=='1'"
           Write-Host "Actualización OK"
 
       - name: Crear FacturasLH.exe
