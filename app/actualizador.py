@@ -123,7 +123,8 @@ def instalar_y_reiniciar(nuevo_exe: Path) -> None:
     lanzar_sustitucion(os.getpid(), nuevo_exe, Path(sys.executable), arrancar=True)
 
 
-def lanzar_sustitucion(pid: int, nuevo: Path, actual: Path, arrancar: bool = True) -> subprocess.Popen:
+def lanzar_sustitucion(pid: int, nuevo: Path, actual: Path, arrancar: bool = True,
+                       argumentos: str = "") -> subprocess.Popen:
     q = lambda p: str(p).replace("'", "''")  # noqa: E731
     script = (
         "$ErrorActionPreference = 'SilentlyContinue'\n"
@@ -132,7 +133,8 @@ def lanzar_sustitucion(pid: int, nuevo: Path, actual: Path, arrancar: bool = Tru
         f"  try {{ Move-Item -LiteralPath '{q(nuevo)}' -Destination '{q(actual)}' -Force -ErrorAction Stop; break }}\n"
         "  catch { Start-Sleep -Milliseconds 700 }\n"
         "}\n"
-        + (f"Start-Process -FilePath '{q(actual)}'\n" if arrancar else "")
+        + ((f"Start-Process -FilePath '{q(actual)}'"
+            + (f" -ArgumentList '{q(argumentos)}'" if argumentos else "") + "\n") if arrancar else "")
     )
     codificado = base64.b64encode(script.encode("utf-16-le")).decode()
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
