@@ -45,7 +45,8 @@ C = {
 }
 FUENTE = "Segoe UI" if os.name == "nt" else "DejaVu Sans"
 PERIODOS = (["Año completo", "1er trimestre", "2º trimestre", "3er trimestre", "4º trimestre"]
-            + [m.capitalize() for m in MESES])
+            + [m.capitalize() for m in MESES] + ["Rango de fechas"])
+RANGO = "Rango de fechas"
 
 
 def abrir_archivo(ruta) -> None:
@@ -129,7 +130,7 @@ class Boton(tk.Label):
 class Tarjeta(tk.Frame):
     def __init__(self, master, titulo: str = "", **kw):
         super().__init__(master, bg=C["tarjeta"], highlightthickness=1,
-                         highlightbackground=C["borde"], **kw)
+                         highlightbackground=C["borde"], highlightcolor=C["borde"], **kw)
         if titulo:
             tk.Label(self, text=titulo.upper(), bg=C["tarjeta"], fg=C["acento"],
                      font=(FUENTE, 8, "bold")).pack(anchor="w", padx=18, pady=(14, 4))
@@ -162,6 +163,65 @@ def campo(master, etiqueta, var, fila, col=0, ancho=34, mostrar=None, ayuda=""):
     if ayuda:
         tk.Label(master, text=ayuda, bg=C["tarjeta"], fg=C["tenue"], font=(FUENTE, 8)).grid(
             row=fila, column=col + 2, sticky="w", padx=(0, 18))
+    return e
+
+
+class CajaBusqueda(tk.Frame):
+    """Buscador grande con texto de ayuda y botón para borrar."""
+
+    def __init__(self, master, al_cambiar, ayuda="Nombre, nº de cliente o NIF"):
+        super().__init__(master, bg="#FFFFFF", highlightthickness=2, highlightbackground=C["borde"],
+                         highlightcolor=C["acento"])
+        self._ayuda = ayuda
+        self.var = tk.StringVar()
+        tk.Label(self, text="Buscar", bg="#FFFFFF", fg=C["acento"], font=(FUENTE, 10, "bold")).pack(side="left", padx=(10, 6))
+        self.e = tk.Entry(self, textvariable=self.var, relief="flat", font=(FUENTE, 11), bg="#FFFFFF",
+                          fg=C["texto"], insertbackground=C["texto"], highlightthickness=0)
+        self.e.pack(side="left", fill="x", expand=True, ipady=7)
+        self.x = tk.Label(self, text="✕", bg="#FFFFFF", fg=C["tenue"], font=(FUENTE, 10), cursor="hand2", padx=10)
+        self.x.pack(side="right")
+        self.x.bind("<Button-1>", lambda e: self.limpiar())
+        self._con_ayuda = False
+        self.e.bind("<FocusIn>", lambda e: self._quitar_ayuda())
+        self.e.bind("<FocusOut>", lambda e: self._poner_ayuda())
+        self.e.bind("<Escape>", lambda e: self.limpiar())
+        self._poner_ayuda()
+        self.var.trace_add("write", lambda *a: al_cambiar())
+
+    def _poner_ayuda(self):
+        if not self.var.get():
+            self._con_ayuda = True
+            self.e.config(fg=C["tenue"])
+            self.var.set(self._ayuda)
+
+    def _quitar_ayuda(self):
+        if self._con_ayuda:
+            self._con_ayuda = False
+            self.e.config(fg=C["texto"])
+            self.var.set("")
+
+    def limpiar(self):
+        self._con_ayuda = False
+        self.e.config(fg=C["texto"])
+        self.var.set("")
+        self.e.focus_set()
+
+    def texto(self) -> str:
+        return "" if self._con_ayuda else self.var.get().strip().lower()
+
+
+def coincide(c: Cliente, q: str) -> bool:
+    """Busca por nº de cliente (si se escriben solo cifras), nombre, NIF o email."""
+    if not q:
+        return True
+    if q.isdigit():
+        return c.codigo == q or c.codigo.startswith(q) or q in (c.nif or "")
+    pajar = f"{c.nombre} {c.nif} {c.codigo} {c.email}".lower()
+    return all(t in pajar for t in q.split())
+
+
+def entrada_fecha(master, var):
+    e = ttk.Entry(master, textvariable=var, width=11, justify="center")
     return e
 
 
@@ -494,27 +554,30 @@ class PaginaPorCliente(Pagina):
     def __init__(self, master, app, titulo, subtitulo):
         self._filas: dict = {}
         super().__init__(master, app, titulo, subtitulo)
+        self.barra = Tarjeta(self)
+        self.barra.pack(fill="x", padx=28, pady=(0, 14))
+        self.barra_in = tk.Frame(self.barra, bg=C["tarjeta"])
+        self.barra_in.pack(fill="x", padx=18, pady=12)
         cuerpo = tk.Frame(self, bg=C["fondo"])
         cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 24))
 
         # --- lista
-        izq = Tarjeta(cuerpo, width=400)
+        izq = Tarjeta(cuerpo, width=450)
         izq.pack(side="left", fill="y")
         izq.pack_propagate(False)
-        bus = tk.Frame(izq, bg=C["tarjeta"])
-        bus.pack(fill="x", padx=16, pady=(16, 10))
-        self.v_busca = tk.StringVar()
-        self.v_busca.trace_add("write", lambda *a: self.pintar_lista())
-        e = ttk.Entry(bus, textvariable=self.v_busca)
-        e.pack(fill="x")
-        self._marcador(e, "Buscar cliente o NIF…")
+        self.busca = CajaBusqueda(izq, lambda: self.pintar_lista())
+        self.busca.pack(fill="x", padx=16, pady=(16, 10))
         pie = tk.Frame(izq, bg=C["tarjeta"])
         pie.pack(side="bottom", fill="x", padx=16, pady=12)
         marco, self.tv = tabla(izq, self.COLS_LISTA, altura=8)
         marco.pack(fill="both", expand=True, padx=16)
+        self._orden = ("cliente", False)
+        self._titulos = {cid: tit for cid, tit, _, _ in self.COLS_LISTA}
+        for cid, *_ in self.COLS_LISTA:
+            self.tv.heading(cid, command=lambda c=cid: self._ordenar(c))
         self.tv.bind("<<TreeviewSelect>>", lambda ev: self.pintar_ficha())
         self.tv.bind("<Double-1>", lambda ev: self.ver())
-        self.lbl_resumen = etiqueta(pie, "", 8, C["tenue"], anchor="w", justify="left", wraplength=360)
+        self.lbl_resumen = etiqueta(pie, "", 8, C["tenue"], anchor="w", justify="left", wraplength=400)
         self.lbl_resumen.pack(fill="x", pady=(0, 8))
         self.pie_botones = tk.Frame(pie, bg=C["tarjeta"])
         self.pie_botones.pack(fill="x")
@@ -552,31 +615,22 @@ class PaginaPorCliente(Pagina):
         self.tv_f.bind("<Button-3>", self._menu_factura)
         self.tv_f.bind("<Double-1>", self._menu_factura)
 
-    @staticmethod
-    def _marcador(entry: ttk.Entry, texto: str):
-        """Texto de ayuda dentro del cuadro de búsqueda."""
-        var = entry.cget("textvariable")
-
-        def poner(_=None):
-            if not entry.get():
-                entry.configure(foreground=C["tenue"])
-                entry.insert(0, texto)
-                entry._marcador = True
-
-        def quitar(_=None):
-            if getattr(entry, "_marcador", False):
-                entry._marcador = False
-                entry.delete(0, "end")
-                entry.configure(foreground=C["texto"])
-        entry.bind("<FocusIn>", quitar)
-        entry.bind("<FocusOut>", poner)
-        entry._marcador = False
-        poner()
-        del var
-
     def busqueda(self) -> str:
-        e = self.v_busca.get()
-        return "" if e.startswith("Buscar cliente") else e.strip().lower()
+        return self.busca.texto() if hasattr(self, "busca") else ""
+
+    def _ordenar(self, col):
+        actual, inv = self._orden
+        self._orden = (col, not inv if actual == col else col in ("total", "n"))
+        self.pintar_lista()
+
+    def _clave_orden(self, col, clave, c, fs):
+        if col == "cod":
+            return (0, int(c.codigo)) if c.codigo.isdigit() else (1, c.nombre.lower())
+        if col in ("total", "n"):
+            return sum(f.importe_total for f in fs) if col == "total" else len(fs)
+        if col == "nif":
+            return c.nif or "~"
+        return c.nombre.lower()
 
     # --- a implementar por cada página
     def datos(self) -> list[tuple[str, Cliente, list]]:
@@ -621,14 +675,22 @@ class PaginaPorCliente(Pagina):
         self.tv.delete(*self.tv.get_children())
         q = self.busqueda()
         envios = self.app.almacen.envios(self.grupo_envio())
-        filas = sorted(self._filas.items(), key=lambda x: x[1][0].nombre.lower())
-        for i, (clave, (c, fs)) in enumerate(filas):
-            if q and q not in f"{c.nombre} {c.nif} {c.codigo}".lower():
+        col, inv = self._orden
+        filas = sorted(self._filas.items(), key=lambda x: self._clave_orden(col, x[0], *x[1]), reverse=inv)
+        for cid, tit in self._titulos.items():
+            self.tv.heading(cid, text=tit + ((" ▼" if inv else " ▲") if cid == col and tit else ""))
+        n = 0
+        for clave, (c, fs) in filas:
+            if not coincide(c, q):
                 continue
             env = envios.get(clave)
-            tags = ("par",) if i % 2 else ()
-            tags += ("enviado",) if env else (("sinemail",) if not c.email else ())
-            self.tv.insert("", "end", iid=clave, values=self.fila_lista(clave, c, fs, env), tags=tags)
+            self.tv.insert("", "end", iid=clave, values=self.fila_lista(clave, c, fs, env),
+                           tags=("par",) if n % 2 else ())
+            n += 1
+        if q:
+            self.lbl_resumen.config(text=f"{n} cliente(s) encontrados para «{q}»")
+        elif hasattr(self, "_resumen_txt"):
+            self.lbl_resumen.config(text=self._resumen_txt)
         hijos = self.tv.get_children()
         objetivo = [s for s in sel if s in hijos] or list(hijos[:1])
         if objetivo:
@@ -654,8 +716,8 @@ class PaginaPorCliente(Pagina):
         c = self.app.almacen.clientes().get(clave, c)
         self._filas[clave] = (c, fs)
         self.lbl_nombre.config(text=c.nombre)
-        partes = [x for x in [f"NIF {c.nif}" if c.nif else "", c.email or "sin email",
-                              f"Cód. {c.codigo}" if c.codigo else ""] if x]
+        partes = [x for x in [f"Nº cliente {c.codigo}" if c.codigo else "", f"NIF {c.nif}" if c.nif else "",
+                              c.email or "sin email"] if x]
         self.lbl_datos.config(text="   ·   ".join(partes), fg=C["suave"] if c.email else C["aviso"])
         self.pintar_kpis(clave, c, fs)
         env = self.app.almacen.envios(self.grupo_envio()).get(clave)
@@ -746,24 +808,38 @@ class PaginaPorCliente(Pagina):
 
 
 class PaginaListados(PaginaPorCliente):
-    COLS_LISTA = [("cliente", "Cliente", 190, "w"), ("n", "Fact.", 44, "e"), ("total", "Total", 92, "e"),
-                  ("est", "", 30, "center")]
+    COLS_LISTA = [("cod", "Nº", 50, "e"), ("cliente", "Cliente", 210, "w"), ("n", "Fact.", 40, "e"),
+                  ("total", "Total", 84, "e"), ("est", "", 24, "center")]
     COLS_FACT = [("tipo", "Tipo", 92, "w"), ("num", "Nº factura", 92, "w"), ("fecha", "Fecha", 86, "w"),
                  ("base", "Base", 84, "e"), ("iva", "IVA", 76, "e"),
                  ("total", "Total", 88, "e"), ("aviso", "Observaciones", 90, "w")]
 
     def __init__(self, master, app):
         super().__init__(master, app, "Listados de facturas", "")
-        etiqueta(self.acciones, "Año", 9, bg=C["fondo"]).pack(side="left", padx=(0, 6))
+        b = self.barra_in
+        etiqueta(b, "PERIODO", 8, C["acento"], True).pack(side="left", padx=(0, 12))
+        etiqueta(b, "Año").pack(side="left", padx=(0, 6))
         self.v_anio = tk.StringVar()
-        self.cb_anio = ttk.Combobox(self.acciones, textvariable=self.v_anio, width=6, state="readonly")
+        self.cb_anio = ttk.Combobox(b, textvariable=self.v_anio, width=6, state="readonly")
         self.cb_anio.pack(side="left")
-        etiqueta(self.acciones, "Periodo", 9, bg=C["fondo"]).pack(side="left", padx=(16, 6))
+        etiqueta(b, "Mes / trimestre").pack(side="left", padx=(14, 6))
         self.v_periodo = tk.StringVar()
-        cb = ttk.Combobox(self.acciones, textvariable=self.v_periodo, values=PERIODOS, width=15, state="readonly")
+        cb = ttk.Combobox(b, textvariable=self.v_periodo, values=PERIODOS, width=16, state="readonly")
         cb.pack(side="left")
         for w in (self.cb_anio, cb):
-            w.bind("<<ComboboxSelected>>", lambda e: self.recargar())
+            w.bind("<<ComboboxSelected>>", lambda e: self._periodo_elegido())
+        tk.Frame(b, bg=C["borde"], width=1, height=26).pack(side="left", padx=18)
+        etiqueta(b, "Desde").pack(side="left", padx=(0, 6))
+        self.v_desde, self.v_hasta = tk.StringVar(), tk.StringVar()
+        e1 = entrada_fecha(b, self.v_desde)
+        e1.pack(side="left")
+        etiqueta(b, "Hasta").pack(side="left", padx=(12, 6))
+        e2 = entrada_fecha(b, self.v_hasta)
+        e2.pack(side="left")
+        for e in (e1, e2):
+            e.bind("<Return>", lambda ev: self.aplicar_rango())
+        Boton(b, "Aplicar fechas", self.aplicar_rango).pack(side="left", padx=(12, 0))
+        self._rango = None
         Boton(self.acc_extra, "Excel", lambda: self.exportar("xlsx")).pack(side="left", padx=(0, 6))
         Boton(self.acc_extra, "CSV", lambda: self.exportar("csv")).pack(side="left")
         Boton(self.pie_botones, "Excel de todo el periodo", self.exportar_todo).pack(side="right")
@@ -787,11 +863,37 @@ class PaginaListados(PaginaPorCliente):
         self.v_anio.set(str(a))
         self.v_periodo.set(PERIODOS[4 + m])
 
+    def _periodo_elegido(self):
+        if self.v_periodo.get() == RANGO:
+            if not self._rango:
+                messagebox.showinfo(NOMBRE_APP, "Escribe las fechas Desde y Hasta y pulsa «Aplicar fechas».", parent=self)
+            return
+        self._rango = None
+        self.recargar()
+
+    def aplicar_rango(self):
+        from .lector import parse_fecha
+        d, h = parse_fecha(self.v_desde.get().strip()), parse_fecha(self.v_hasta.get().strip())
+        if not d or not h:
+            messagebox.showwarning(NOMBRE_APP, "Escribe las fechas como dd/mm/aaaa (por ejemplo 01/03/2026).", parent=self)
+            return
+        if d > h:
+            d, h = h, d
+        self._rango = (d, h)
+        self.v_periodo.set(RANGO)
+        self.recargar()
+
     def datos(self):
         reg = self.app.almacen.registro()
         self._periodo_inicial(reg)
-        anio, periodo = int(self.v_anio.get()), self.v_periodo.get()
-        desde, hasta = rango_periodo(anio, periodo)
+        if self.v_periodo.get() == RANGO and self._rango:
+            desde, hasta = self._rango
+        else:
+            if self.v_periodo.get() == RANGO:
+                self.v_periodo.set(PERIODOS[0])
+            desde, hasta = rango_periodo(int(self.v_anio.get()), self.v_periodo.get())
+        self.v_desde.set(fecha_es(desde))
+        self.v_hasta.set(fecha_es(hasta))
         self.vista = reg.filtrar(desde, hasta)
         self.vista.desde, self.vista.hasta = desde, hasta
         maestro = self.app.almacen.clientes()
@@ -804,18 +906,24 @@ class PaginaListados(PaginaPorCliente):
         for clave, c in self.vista.clientes.items():
             out.append((clave, maestro.get(clave, c), self.vista.facturas_de(clave)))
         con_email = sum(1 for _, c, _ in out if c.email)
-        self.lbl_resumen.config(text=f"{len(out)} clientes · {con_email} con email · "
-                                     f"total {eur(sum(f.importe_total for f in self.vista.facturas))}")
+        self._resumen_txt = (f"{len(out)} clientes · {con_email} con email · "
+                             f"total {eur(sum(f.importe_total for f in self.vista.facturas))}\n"
+                             "✔ enviado   ✉ con email   — sin email")
+        self.lbl_resumen.config(text=self._resumen_txt)
         return out
 
     def etiqueta(self):
+        if self.v_periodo.get() == RANGO and self._rango:
+            d, h = self._rango
+            return f"{d:%Y-%m-%d} a {h:%Y-%m-%d}"
         return etiqueta_periodo(int(self.v_anio.get()), self.v_periodo.get())
 
     def grupo_envio(self):
         return f"listado:{self.vista.desde}:{self.vista.hasta}" if self.vista else ""
 
     def fila_lista(self, clave, c, fs, env):
-        return (c.nombre, len(fs), eur(sum(f.importe_total for f in fs)), "✔" if env else ("✉" if c.email else "—"))
+        return (c.codigo or "—", c.nombre, len(fs), eur(sum(f.importe_total for f in fs)),
+                "✔" if env else ("✉" if c.email else "—"))
 
     def pintar_kpis(self, clave, c, fs):
         self.kpi(str(len(fs)), "Facturas")
@@ -879,8 +987,8 @@ class PaginaListados(PaginaPorCliente):
 
 
 class Pagina347(PaginaPorCliente):
-    COLS_LISTA = [("cliente", "Cliente", 160, "w"), ("nif", "NIF", 86, "w"), ("total", "Importe", 90, "e"),
-                  ("est", "", 30, "center")]
+    COLS_LISTA = [("cod", "Nº", 50, "e"), ("cliente", "Cliente", 230, "w"),
+                  ("total", "Importe", 94, "e"), ("est", "", 24, "center")]
     COLS_FACT = [("num", "Factura", 110, "w"), ("fecha", "Fecha factura", 110, "w"),
                  ("cont", "Fecha contabilización", 140, "w"), ("tipo", "Tipo", 100, "w"),
                  ("total", "Importe", 100, "e"), ("aviso", "", 20, "w")]
@@ -888,9 +996,9 @@ class Pagina347(PaginaPorCliente):
     def __init__(self, master, app):
         super().__init__(master, app, "Modelo 347",
                          f"Clientes con operaciones superiores a {eur(UMBRAL)} en el año (IVA incluido).")
-        etiqueta(self.acciones, "Ejercicio", 9, bg=C["fondo"]).pack(side="left", padx=(0, 6))
+        etiqueta(self.barra_in, "EJERCICIO", 8, C["acento"], True).pack(side="left", padx=(0, 12))
         self.v_anio = tk.StringVar()
-        self.cb_anio = ttk.Combobox(self.acciones, textvariable=self.v_anio, width=6, state="readonly")
+        self.cb_anio = ttk.Combobox(self.barra_in, textvariable=self.v_anio, width=6, state="readonly")
         self.cb_anio.pack(side="left")
         self.cb_anio.bind("<<ComboboxSelected>>", lambda e: self.recargar())
         Boton(self.pie_botones, "Resumen en Excel", self.exportar_resumen).pack(side="right")
@@ -914,6 +1022,8 @@ class Pagina347(PaginaPorCliente):
         if sin_nif:
             txt += (f"\n{len(sin_nif)} cliente(s) superan el importe pero no tienen NIF y no se incluyen "
                     f"(p. ej. {sin_nif[0].cliente.nombre}).")
+        txt += "\n✔ enviado   ✉ con email   — sin email"
+        self._resumen_txt = txt
         self.lbl_resumen.config(text=txt)
         return [(fl.clave, fl.cliente, fl.facturas) for fl in incluidos]
 
@@ -924,7 +1034,8 @@ class Pagina347(PaginaPorCliente):
         return f"347:{self.v_anio.get()}"
 
     def fila_lista(self, clave, c, fs, env):
-        return (c.nombre, c.nif, eur(sum(f.importe_total for f in fs)), "✔" if env else ("✉" if c.email else "—"))
+        return (c.codigo or "—", c.nombre, eur(sum(f.importe_total for f in fs)),
+                "✔" if env else ("✉" if c.email else "—"))
 
     def pintar_kpis(self, clave, c, fs):
         fl = self._lineas347[clave]
@@ -1210,15 +1321,14 @@ class PaginaClientes(Pagina):
         izq = Tarjeta(cuerpo)
         busq = tk.Frame(izq, bg=C["tarjeta"])
         busq.pack(fill="x", padx=16, pady=14)
-        self.v_buscar = tk.StringVar()
-        self.v_buscar.trace_add("write", lambda *a: self.pintar())
-        e = ttk.Entry(busq, textvariable=self.v_buscar, width=40)
-        e.pack(side="left")
-        PaginaPorCliente._marcador(e, "Buscar cliente o NIF…")
+        self.busca = CajaBusqueda(busq, lambda: self.pintar(), "Nombre, nº de cliente, NIF o email")
+        self.busca.pack(side="left", fill="x", expand=True)
         self.v_solo = tk.BooleanVar()
         ttk.Checkbutton(busq, text="Solo sin email", variable=self.v_solo, command=self.pintar).pack(side="left", padx=12)
-        marco, self.tv = tabla(izq, [("nombre", "Cliente", 280, "w"), ("nif", "NIF/CIF", 110, "w"),
-                                     ("email", "Email", 220, "w"), ("pob", "Población", 130, "w")], altura=18)
+        self.lbl_n = etiqueta(izq, "", 8, C["tenue"], anchor="w")
+        self.lbl_n.pack(side="bottom", fill="x", padx=16, pady=(0, 10))
+        marco, self.tv = tabla(izq, [("cod", "Nº", 60, "e"), ("nombre", "Cliente", 260, "w"), ("nif", "NIF/CIF", 100, "w"),
+                                     ("email", "Email", 200, "w"), ("pob", "Población", 120, "w")], altura=12)
         marco.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.tv.bind("<<TreeviewSelect>>", lambda e: self.cargar())
 
@@ -1255,15 +1365,16 @@ class PaginaClientes(Pagina):
             return
         sel = self.clave
         self.tv.delete(*self.tv.get_children())
-        q = self.v_buscar.get()
-        q = "" if q.startswith("Buscar cliente") else q.lower().strip()
-        for i, c in enumerate(sorted(self.app.almacen.clientes().values(), key=lambda c: c.nombre.lower())):
-            if q and q not in f"{c.nombre} {c.nif} {c.email} {c.codigo}".lower():
+        q = self.busca.texto()
+        todos = self.app.almacen.clientes().values()
+        n = 0
+        for c in sorted(todos, key=lambda c: c.nombre.lower()):
+            if not coincide(c, q) or (self.v_solo.get() and c.email):
                 continue
-            if self.v_solo.get() and c.email:
-                continue
-            self.tv.insert("", "end", iid=c.clave, values=(c.nombre, c.nif, c.email, c.poblacion),
-                           tags=("par",) if i % 2 else ())
+            self.tv.insert("", "end", iid=c.clave, values=(c.codigo or "—", c.nombre, c.nif, c.email, c.poblacion),
+                           tags=("par",) if n % 2 else ())
+            n += 1
+        self.lbl_n.config(text=f"{n} de {len(todos)} clientes")
         if sel and sel in self.tv.get_children():
             self.tv.selection_set(sel)
 
