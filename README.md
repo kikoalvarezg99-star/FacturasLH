@@ -15,7 +15,10 @@ imprimir o enviar por email.
    cliente, todas sus facturas, el resumen por tipo de IVA y los totales.
 4. Desde el programa puedes **verlo, imprimirlo, enviarlo por email** al cliente (o a quien
    quieras) y exportarlo a **Excel o CSV** si el cliente lo pide. También *Enviar a todos*.
-5. **Se actualiza solo** desde el repositorio kikoalvarezg99-star/FacturasLH de GitHub.
+5. **Modelo 347:** lista los clientes con operaciones anuales superiores a 3.005,06 € (IVA
+   incluido) y genera la carta de confirmación (con el destinatario en la ventana del sobre),
+   para ver, imprimir o enviar por email.
+6. **Se actualiza solo** desde el repositorio kikoalvarezg99-star/FacturasLH de GitHub.
 
 ## Primera instalación en el PC de la tienda
 
@@ -28,9 +31,9 @@ imprimir o enviar por email.
 
 ## Configuración (una sola vez)
 
-En **Configuración**:
+En **Configuración** (protegida con código de acceso):
 
-- **Datos de la empresa:** CIF, dirección, teléfono… (salen en la cabecera del PDF).
+- **Datos de la empresa:** son fijos (Ferretería LH S.L., B90430356) y no se pueden cambiar.
 - **Correo:** usuario, contraseña, servidor IMAP y SMTP. Los da tu proveedor de correo
   (normalmente `mail.ferreterialashuertas.es`, IMAP 993 y SMTP 465 con SSL). Pulsa
   **Probar conexión**.

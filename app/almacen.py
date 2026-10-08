@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import ruta_datos, ruta_documentos
 from .exportar import exportar_csv, exportar_excel
-from .informe import MESES, generar_listado
+from .informe import generar_listado
 from .lector import Diario, leer_diario
 from .modelo import Cliente, clave_cliente
 
@@ -41,6 +41,7 @@ class Almacen:
         self.dir_entrada = self.base / "entrada"
         self.dir_diarios.mkdir(parents=True, exist_ok=True)
         self.dir_entrada.mkdir(parents=True, exist_ok=True)
+        self._cache = None
 
     # --------------------------------------------------------- estado correo
     def estado_correo(self) -> dict:
@@ -130,6 +131,8 @@ class Almacen:
         return Cliente(clave=clave, nombre=clave)
 
     # --------------------------------------------------------------- diarios
+    # Cada diario recibido se guarda (uso interno) y sus facturas se integran en un
+    # registro único de facturas: el diario más reciente manda en su periodo.
     def procesar(self, ruta_origen, cfg: dict, origen: str = "manual", asunto: str = "",
                  remitente: str = "") -> tuple[str, Diario]:
         ruta_origen = Path(ruta_origen)
@@ -147,10 +150,12 @@ class Almacen:
         _escribir_json(carpeta / "meta.json", {
             "id": ident, "archivo": ruta_origen.name, "original": destino.name,
             "recibido": datetime.now().isoformat(timespec="seconds"),
-            "origen": origen, "asunto": asunto, "remitente": remitente, "envios": {},
+            "origen": origen, "asunto": asunto, "remitente": remitente,
             **self._resumen(diario),
         })
         self._fusionar_clientes(diario)
+        if diario.facturas:
+            self._integrar(diario)
         return ident, diario
 
     @staticmethod
@@ -162,18 +167,14 @@ class Almacen:
 
     def reprocesar(self, ident: str, cfg: dict) -> Diario:
         """Vuelve a leer el archivo original (útil tras una actualización del lector)."""
-        anterior = self.diario(ident)
         diario = leer_diario(self.ruta_original(ident), cfg)
-        if len(anterior.facturas) == len(diario.facturas):  # conserva tipos corregidos a mano
-            for viejo, nuevo in zip(anterior.facturas, diario.facturas):
-                if (viejo.numero, viejo.fecha) == (nuevo.numero, nuevo.fecha):
-                    nuevo.tipo = viejo.tipo
         self.guardar_diario(ident, diario)
         f = self.dir_diarios / ident / "meta.json"
         meta = _leer_json(f, {})
         meta.update(self._resumen(diario))
         _escribir_json(f, meta)
         self._fusionar_clientes(diario)
+        self.reconstruir()
         return diario
 
     def lista_diarios(self) -> list[dict]:
@@ -197,60 +198,156 @@ class Almacen:
     def meta(self, ident: str) -> dict:
         return _leer_json(self.dir_diarios / ident / "meta.json", {})
 
-    def registrar_envio(self, ident: str, clave: str, destinatarios: list[str]) -> None:
-        f = self.dir_diarios / ident / "meta.json"
-        meta = _leer_json(f, {})
-        meta.setdefault("envios", {}).setdefault(clave, []).append(
-            {"fecha": datetime.now().isoformat(timespec="seconds"), "para": destinatarios})
-        _escribir_json(f, meta)
-
     def eliminar_diario(self, ident: str) -> None:
         shutil.rmtree(self.dir_diarios / ident, ignore_errors=True)
+        self.reconstruir()
 
     def ruta_original(self, ident: str) -> Path:
         meta = self.meta(ident)
         return self.dir_diarios / ident / meta.get("original", "")
 
+    # ------------------------------------------------- registro de facturas
+    @property
+    def _f_registro(self) -> Path:
+        return self.base / "facturas.json"
+
+    def registro(self) -> Diario:
+        """Todas las facturas recibidas (sin duplicados)."""
+        f = self._f_registro
+        if not f.exists():
+            if any(self.dir_diarios.iterdir()):
+                self.reconstruir()
+            else:
+                return Diario(archivo="registro")
+        mt = f.stat().st_mtime
+        if self._cache is None or self._cache[0] != mt:
+            d = Diario.from_dict(_leer_json(f, {}))
+            d.desde = d.hasta = None
+            self._cache = (mt, d)
+        return self._cache[1]
+
+    def _guardar_registro(self, d: Diario) -> None:
+        _escribir_json(self._f_registro, d.to_dict())
+        self._cache = None
+
+    @staticmethod
+    def _clave_factura(f) -> str:
+        return f"{f.numero}|{f.fecha}|{f.cliente_clave}"
+
+    def _integrar(self, diario: Diario, registro: Diario | None = None, guardar: bool = True) -> Diario:
+        reg = registro or self.registro()
+        desde, hasta = diario.fecha_desde, diario.fecha_hasta
+        nuevas = {self._clave_factura(f) for f in diario.facturas}
+        conservar = [f for f in reg.facturas
+                     if not (desde and hasta and f.fecha and desde <= f.fecha <= hasta)
+                     and self._clave_factura(f) not in nuevas]
+        manuales = _leer_json(self.base / "tipos_manuales.json", {})
+        for f in diario.facturas:
+            f.tipo = manuales.get(self._clave_factura(f), f.tipo)
+        reg = Diario(archivo="registro", facturas=conservar + list(diario.facturas),
+                     clientes={**reg.clientes, **diario.clientes})
+        if guardar:
+            self._guardar_registro(reg)
+        return reg
+
+    def reconstruir(self) -> None:
+        reg = Diario(archivo="registro")
+        for meta in sorted(self.lista_diarios(), key=lambda m: m["recibido"]):
+            reg = self._integrar(self.diario(meta["id"]), reg, guardar=False)
+        self._guardar_registro(reg)
+
+    def cambiar_tipo(self, factura, tipo: str) -> None:
+        manuales = _leer_json(self.base / "tipos_manuales.json", {})
+        manuales[self._clave_factura(factura)] = tipo
+        _escribir_json(self.base / "tipos_manuales.json", manuales)
+        reg = self.registro()
+        clave = self._clave_factura(factura)
+        for f in reg.facturas:
+            if self._clave_factura(f) == clave:
+                f.tipo = tipo
+        factura.tipo = tipo
+        self._guardar_registro(reg)
+
+    def ultima_recepcion(self) -> str:
+        lista = self.lista_diarios()
+        return lista[0]["recibido"] if lista else ""
+
+    # ----------------------------------------------------------------- envíos
+    def envios(self, grupo: str) -> dict:
+        return _leer_json(self.base / "envios.json", {}).get(grupo, {})
+
+    def registrar_envio(self, grupo: str, clave: str, destinatarios: list[str]) -> None:
+        f = self.base / "envios.json"
+        datos = _leer_json(f, {})
+        datos.setdefault(grupo, {}).setdefault(clave, []).append(
+            {"fecha": datetime.now().isoformat(timespec="seconds"), "para": destinatarios})
+        _escribir_json(f, datos)
+
     # -------------------------------------------------------------- salidas
-    def carpeta_salida(self, ident: str, diario: Diario) -> Path:
-        d = diario.fecha_hasta
-        nombre = f"{d.year}-{d.month:02d} {MESES[d.month - 1]}" if d else ident
-        p = ruta_documentos() / nombre
+    def carpeta(self, nombre: str) -> Path:
+        p = ruta_documentos() / nombre_archivo(nombre)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    def _base_nombre(self, diario: Diario, cliente: Cliente) -> str:
-        d = diario.fecha_hasta
-        sufijo = f" {d.year}-{d.month:02d}" if d else ""
-        return nombre_archivo(f"Listado facturas {cliente.nombre}{sufijo}")
+    def generar_pdf(self, vista: Diario, clave: str, cfg: dict, etiqueta: str) -> Path:
+        cliente = self.cliente(clave, vista)
+        ruta = self.carpeta(etiqueta) / (nombre_archivo(f"Listado facturas {cliente.nombre} {etiqueta}") + ".pdf")
+        return generar_listado(ruta, vista.facturas_de(clave), cliente, cfg, vista.desde, vista.hasta)
 
-    def generar_pdf(self, ident: str, diario: Diario, clave: str, cfg: dict) -> Path:
-        cliente = self.cliente(clave, diario)
-        ruta = self.carpeta_salida(ident, diario) / (self._base_nombre(diario, cliente) + ".pdf")
-        return generar_listado(ruta, diario.facturas_de(clave), cliente, cfg,
-                               diario.fecha_desde, diario.fecha_hasta)
-
-    def generar_excel(self, ident: str, diario: Diario, clave: str | None, cfg: dict) -> Path:
-        clientes = {**diario.clientes, **self.clientes()}
+    def generar_excel(self, vista: Diario, clave: str | None, cfg: dict, etiqueta: str) -> Path:
+        clientes = {**vista.clientes, **self.clientes()}
         if clave:
-            cliente = self.cliente(clave, diario)
-            facts = diario.facturas_de(clave)
-            nombre = self._base_nombre(diario, cliente)
+            facts = vista.facturas_de(clave)
+            nombre = f"Listado facturas {self.cliente(clave, vista).nombre} {etiqueta}"
         else:
-            facts = sorted(diario.facturas, key=lambda f: (clientes.get(f.cliente_clave, Cliente(f.cliente_clave)).nombre, f.fecha or datetime.min.date()))
-            nombre = f"Diario completo {ident}"
-        return exportar_excel(self.carpeta_salida(ident, diario) / (nombre + ".xlsx"), facts, clientes,
-                              cfg["empresa"], titulo="Listado de facturas")
+            facts = sorted(vista.facturas, key=lambda f: (clientes.get(f.cliente_clave, Cliente(f.cliente_clave)).nombre, f.fecha or datetime.min.date()))
+            nombre = f"Facturas {etiqueta}"
+        return exportar_excel(self.carpeta(etiqueta) / (nombre_archivo(nombre) + ".xlsx"), facts, clientes,
+                              cfg["empresa"], titulo=f"Listado de facturas · {etiqueta}")
 
-    def generar_csv(self, ident: str, diario: Diario, clave: str | None, cfg: dict) -> Path:
-        clientes = {**diario.clientes, **self.clientes()}
+    def generar_csv(self, vista: Diario, clave: str | None, cfg: dict, etiqueta: str) -> Path:
+        clientes = {**vista.clientes, **self.clientes()}
         if clave:
-            facts = diario.facturas_de(clave)
-            nombre = self._base_nombre(diario, self.cliente(clave, diario))
+            facts = vista.facturas_de(clave)
+            nombre = f"Listado facturas {self.cliente(clave, vista).nombre} {etiqueta}"
         else:
-            facts = diario.facturas
-            nombre = f"Diario completo {ident}"
-        return exportar_csv(self.carpeta_salida(ident, diario) / (nombre + ".csv"), facts, clientes)
+            facts = vista.facturas
+            nombre = f"Facturas {etiqueta}"
+        return exportar_csv(self.carpeta(etiqueta) / (nombre_archivo(nombre) + ".csv"), facts, clientes)
+
+    def generar_347(self, fila, ejercicio: int, cfg: dict) -> Path:
+        from .modelo347 import generar_carta
+        ruta = self.carpeta(f"Modelo 347 {ejercicio}") / (nombre_archivo(f"Modelo 347 {ejercicio} {fila.cliente.nombre}") + ".pdf")
+        return generar_carta(ruta, fila, ejercicio, cfg)
+
+    def exportar_347(self, filas, ejercicio: int, cfg: dict) -> Path:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"347 {ejercicio}"
+        ws.append([cfg["empresa"]["nombre"]])
+        ws.append([f"Modelo 347 · Ejercicio {ejercicio} · Clientes con operaciones > 3.005,06 €"])
+        ws.append([])
+        cab = ["Código", "Cliente", "NIF/CIF", "1T", "2T", "3T", "4T", "Total", "Facturas"]
+        ws.append(cab)
+        for c in ws[4]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F2328")
+        for fl in filas:
+            ws.append([fl.cliente.codigo, fl.cliente.nombre, fl.cliente.nif, *fl.trimestres, fl.total, len(fl.facturas)])
+        n = ws.max_row
+        ws.append(["", "TOTAL", "", *[f"=SUM({col}5:{col}{n})" for col in "DEFGH"], f"=SUM(I5:I{n})"])
+        for row in ws.iter_rows(min_row=5, min_col=4, max_col=8):
+            for c in row:
+                c.number_format = '#,##0.00 €'
+        for col, w in zip("ABCDEFGHI", [9, 42, 13, 13, 13, 13, 13, 14, 9]):
+            ws.column_dimensions[col].width = w
+        ws["A1"].font = Font(bold=True, size=13)
+        ws.freeze_panes = "A5"
+        ruta = self.carpeta(f"Modelo 347 {ejercicio}") / f"Resumen Modelo 347 {ejercicio}.xlsx"
+        wb.save(ruta)
+        return ruta
 
 
 def _decodificar_texto(datos: bytes) -> str:

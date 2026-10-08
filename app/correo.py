@@ -55,7 +55,11 @@ def _q(nombre: str) -> str:
 # --------------------------------------------------------------- conexión
 
 
-def _imap(cfg: dict, password: str) -> imaplib.IMAP4:
+def usuario_envio(cfg: dict) -> str:
+    return (cfg["correo"].get("smtp_usuario") or cfg["correo"]["usuario"]).strip()
+
+
+def _imap(cfg: dict, password: str, usuario: str | None = None) -> imaplib.IMAP4:
     c = cfg["correo"]
     host, puerto = c["imap_servidor"].strip(), int(c.get("imap_puerto") or 993)
     if not host:
@@ -68,7 +72,7 @@ def _imap(cfg: dict, password: str) -> imaplib.IMAP4:
             m.starttls(ssl_context=ssl.create_default_context())
         except Exception:
             pass
-    m.login(c["usuario"], password)
+    m.login(usuario or c["usuario"], password)
     return m
 
 
@@ -113,8 +117,8 @@ def _decodificar(valor: str | None) -> str:
         return valor
 
 
-def probar_conexion(cfg: dict, password: str) -> str:
-    """Comprueba IMAP y SMTP. Devuelve un texto con el resultado."""
+def probar_conexion(cfg: dict, password: str, password_envio: str | None = None) -> str:
+    """Comprueba la recepción (IMAP) y el envío (SMTP). Devuelve un texto con el resultado."""
     partes = []
     m = _imap(cfg, password)
     try:
@@ -122,15 +126,15 @@ def probar_conexion(cfg: dict, password: str) -> str:
         m.select(_q(carpeta), readonly=True)
         typ, d = m.uid("search", None, "ALL")
         n = len(d[0].split()) if d and d[0] else 0
-        partes.append(f"✔ IMAP correcto. Carpeta «{_utf7_decode(carpeta)}» con {n} correo(s).")
+        partes.append(f"✔ Recepción correcta ({cfg['correo']['usuario']}): carpeta «{_utf7_decode(carpeta)}» con {n} correo(s).")
     finally:
         try:
             m.logout()
         except Exception:
             pass
-    s = _smtp(cfg, password)
+    s = _smtp(cfg, password_envio or password)
     s.quit()
-    partes.append("✔ SMTP correcto: se pueden enviar correos.")
+    partes.append(f"✔ Envío correcto: los correos saldrán desde {usuario_envio(cfg)}.")
     return "\n".join(partes)
 
 
@@ -210,7 +214,7 @@ def _smtp(cfg: dict, password: str) -> smtplib.SMTP:
         if seg == "STARTTLS":
             s.starttls(context=ctx)
             s.ehlo()
-    s.login(c["usuario"], password)
+    s.login(usuario_envio(cfg), password)
     return s
 
 
@@ -218,10 +222,10 @@ def enviar_email(cfg: dict, password: str, para: list[str], asunto: str, cuerpo:
                  adjuntos: list[Path], copia_oculta: list[str] | None = None) -> None:
     c = cfg["correo"]
     msg = EmailMessage()
-    msg["From"] = formataddr((c.get("remitente_nombre") or "", c["usuario"]))
+    msg["From"] = formataddr((c.get("remitente_nombre") or "", usuario_envio(cfg)))
     msg["To"] = ", ".join(para)
     msg["Subject"] = asunto
-    msg["Message-ID"] = make_msgid(domain=c["usuario"].split("@")[-1] or None)
+    msg["Message-ID"] = make_msgid(domain=usuario_envio(cfg).split("@")[-1] or None)
     msg["Date"] = email.utils.formatdate(localtime=True)
     msg.set_content(cuerpo)
     html = "<br>".join(
@@ -247,7 +251,7 @@ def enviar_email(cfg: dict, password: str, para: list[str], asunto: str, cuerpo:
             pass
     # Copia en "Enviados" (muchos servidores no la guardan al enviar por SMTP)
     try:
-        m = _imap(cfg, password)
+        m = _imap(cfg, password, usuario_envio(cfg))
         try:
             enviados = None
             for imap_n, legible, flags in listar_carpetas(m):

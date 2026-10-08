@@ -37,22 +37,28 @@ def ruta_documentos() -> Path:
 
 ARCHIVO_CONFIG = "config.json"
 
+# Datos fijos de la empresa: no se pueden cambiar desde el programa.
+EMPRESA = {
+    "nombre": "Ferretería LH S.L.",
+    "cif": "B90430356",
+    "direccion": "Polg. Ind. La Campiña, calle Castilla la Mancha 12",
+    "cp": "41400",
+    "poblacion": "Écija",
+    "provincia": "Sevilla",
+    "telefono": "",
+    "email": "facturacion@ferreterialashuertas.es",
+    "web": "",
+    "logo": "",
+    "color": "#C2410C",
+}
+
+PIN_CONFIGURACION = "2706"
+
 DEFAULTS = {
-    "empresa": {
-        "nombre": "Ferretería LH S.L.",
-        "cif": "",
-        "direccion": "",
-        "cp": "",
-        "poblacion": "",
-        "provincia": "",
-        "telefono": "",
-        "email": "contabilidad@ferreterialashuertas.es",
-        "web": "www.ferreterialashuertas.es",
-        "logo": "",  # vacío = logo incluido en el programa
-        "color": "#C2410C",
-    },
+    "empresa": dict(EMPRESA),
     "correo": {
-        "usuario": "contabilidad@ferreterialashuertas.es",
+        "usuario": "contabilidad@ferreterialashuertas.es",  # buzón donde llegan los diarios
+        "smtp_usuario": "facturacion@ferreterialashuertas.es",  # cuenta que envía a los clientes
         "imap_servidor": "imap.ionos.es",
         "imap_puerto": 993,
         "smtp_servidor": "smtp.ionos.es",
@@ -61,7 +67,7 @@ DEFAULTS = {
         "carpeta": "Diarios",
         "comprobar_auto": True,
         "intervalo_min": 10,
-        "remitente_nombre": "Ferretería LH S.L.",
+        "remitente_nombre": "Ferretería LH S.L. - Facturación",
         "copia_a_mi": True,
     },
     "envio": {
@@ -71,10 +77,25 @@ DEFAULTS = {
             "Le adjuntamos el listado de facturas correspondiente a {periodo}, "
             "con {num_facturas} factura(s) por un importe total de {total}.\n\n"
             "Para cualquier consulta puede responder a este correo.\n\n"
-            "Un saludo,\n{empresa}\n{empresa_telefono}"
+            "Un saludo,\n{empresa}\nDpto. Administración"
         ),
         "adjuntar_excel": False,
         "adjuntar_csv": False,
+    },
+    "envio347": {
+        "asunto": "Declaración anual Modelo 347 - Ejercicio {ejercicio} - {empresa}",
+        "cuerpo": (
+            "Estimado/a {cliente}:\n\n"
+            "Le remitimos adjunto el detalle de las facturas realizadas durante el ejercicio {ejercicio} "
+            "que figuran en nuestros archivos, por un importe total de {total}, "
+            "a efectos de la declaración anual de operaciones con terceras personas (Modelo 347).\n\n"
+            "Le agradeceríamos que, en caso de existir alguna discrepancia, nos lo indicara lo antes posible. "
+            "En caso de no recibir respuesta, tomaremos estos datos como correctos y procederemos a su declaración.\n\n"
+            "Un saludo,\n{empresa}\nDpto. Administración"
+        ),
+    },
+    "modelo347": {
+        "umbral": 3005.06,
     },
     "tipos": {
         # prefijo de serie -> tipo de factura (se usa si el diario no indica el tipo)
@@ -120,7 +141,9 @@ def cargar_config() -> dict:
             datos = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             datos = {}
-    return _fusionar(DEFAULTS, datos)
+    cfg = _fusionar(DEFAULTS, datos)
+    cfg["empresa"] = dict(EMPRESA)  # siempre los datos oficiales
+    return cfg
 
 
 def guardar_config(cfg: dict) -> None:
