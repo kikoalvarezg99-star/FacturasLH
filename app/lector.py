@@ -514,6 +514,8 @@ def detectar_tipo(texto_tipo: str, serie: str, total: float, sin_cliente: bool, 
             return "Contado"
         if re.search(r"credito|giro|recibo|transferencia|pagare|domicil|aplazad|\d+\s*d", n):
             return "Crédito"
+        if re.search(r"^factura|directa", n):  # "Factura" del diario ampliado = factura a crédito
+            return "Crédito"
     series = cfg.get("tipos", {}).get("series", {})
     s = (serie or "").upper()
     for pref in sorted(series, key=len, reverse=True):

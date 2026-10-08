@@ -34,9 +34,9 @@ imprimir o enviar por email.
 En **Configuración** (protegida con código de acceso):
 
 - **Datos de la empresa:** son fijos (Ferretería LH S.L., B90430356) y no se pueden cambiar.
-- **Correo:** usuario, contraseña, servidor IMAP y SMTP. Los da tu proveedor de correo
-  (normalmente `mail.ferreterialashuertas.es`, IMAP 993 y SMTP 465 con SSL). Pulsa
-  **Probar conexión**.
+- **Correo:** los diarios se reciben en `contabilidad@ferreterialashuertas.es` (IMAP
+  `imap.ionos.es`, 993) y los envíos a clientes salen de `facturacion@ferreterialashuertas.es`
+  (SMTP `smtp.ionos.es`, 465 SSL). Pulsa **Probar conexión**.
 - **Carpeta de diarios:** `Diarios`. En el correo crea esa carpeta y una regla para que los
   correos con el diario se muevan ahí automáticamente.
 - Marca **Abrir el programa al iniciar Windows** para que esté siempre revisando el correo.
@@ -48,9 +48,10 @@ también puedes guardar la dirección en la ficha.
 
 ## Elegir el periodo
 
-El diario puede abarcar todo el año. En la pantalla *Diarios* escribe las fechas *desde / hasta*
-o pulsa **Mes anterior**, **Este mes** o **Todo**: la lista de clientes, los PDF y los emails
-se ajustan a ese periodo.
+Las facturas de todos los diarios recibidos se juntan sin duplicados. En *Listados de facturas*
+elige **Año** y **Periodo** (mes, trimestre o año completo): la lista de clientes, los PDF y los
+emails se ajustan a ese periodo. Las facturas que el diario marca como "Factura" se identifican
+como **Crédito**.
 
 ## Publicar una actualización
 

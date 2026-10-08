@@ -105,7 +105,7 @@ def generar_carta(ruta, fila: Fila347, ejercicio: int, cfg: dict) -> Path:
         y = top - 8.8 * mm
         lineas = [f"CIF {emp['cif']}" if emp.get("cif") else "", emp.get("direccion", ""),
                   f"{emp.get('cp', '')} {emp.get('poblacion', '')} ({emp.get('provincia', '')})".strip(),
-                  emp.get("email", "")]
+                  "  ·  ".join(x for x in (emp.get("telefono", ""), emp.get("email", "")) if x)]
         for t in lineas:
             if t:
                 cv.drawString(x, y, t)

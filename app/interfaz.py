@@ -943,7 +943,8 @@ class Pagina347(PaginaPorCliente):
     def textos(self, c, fs):
         cfg = self.app.cfg
         datos = _Seguro(cliente=c.nombre, ejercicio=self.v_anio.get(), total=eur(sum(f.importe_total for f in fs)),
-                        num_facturas=len(fs), empresa=cfg["empresa"]["nombre"])
+                        num_facturas=len(fs), empresa=cfg["empresa"]["nombre"],
+                        empresa_telefono=cfg["empresa"].get("telefono", ""))
         return cfg["envio347"]["asunto"].format_map(datos), cfg["envio347"]["cuerpo"].format_map(datos).rstrip()
 
     def exportar_resumen(self):
@@ -1381,7 +1382,7 @@ class PaginaConfig(Pagina):
 
         # Mensajes
         f = self._tarjeta("Mensaje de los listados",
-                          "Puedes usar: {cliente} {periodo} {num_facturas} {total} {empresa}")
+                          "Puedes usar: {cliente} {periodo} {num_facturas} {total} {empresa} {empresa_telefono}")
         campo(f, "Asunto", var("envio", "asunto"), 0, ancho=70)
         self.txt_cuerpo = self._texto(f, 1, cfg["envio"]["cuerpo"])
         ops = tk.Frame(f, bg=C["tarjeta"])
@@ -1390,7 +1391,7 @@ class PaginaConfig(Pagina):
         ttk.Checkbutton(ops, text="Excel", variable=var("envio", "adjuntar_excel", tk.BooleanVar)).pack(side="left", padx=10)
         ttk.Checkbutton(ops, text="CSV", variable=var("envio", "adjuntar_csv", tk.BooleanVar)).pack(side="left")
 
-        f = self._tarjeta("Mensaje del Modelo 347", "Puedes usar: {cliente} {ejercicio} {total} {empresa}")
+        f = self._tarjeta("Mensaje del Modelo 347", "Puedes usar: {cliente} {ejercicio} {total} {empresa} {empresa_telefono}")
         campo(f, "Asunto", var("envio347", "asunto"), 0, ancho=70)
         self.txt_347 = self._texto(f, 1, cfg["envio347"]["cuerpo"])
 

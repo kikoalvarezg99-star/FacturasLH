@@ -45,7 +45,7 @@ EMPRESA = {
     "cp": "41400",
     "poblacion": "Écija",
     "provincia": "Sevilla",
-    "telefono": "",
+    "telefono": "954 96 86 21",
     "email": "facturacion@ferreterialashuertas.es",
     "web": "",
     "logo": "",
@@ -77,7 +77,7 @@ DEFAULTS = {
             "Le adjuntamos el listado de facturas correspondiente a {periodo}, "
             "con {num_facturas} factura(s) por un importe total de {total}.\n\n"
             "Para cualquier consulta puede responder a este correo.\n\n"
-            "Un saludo,\n{empresa}\nDpto. Administración"
+            "Un saludo,\n{empresa}\nDpto. Administración\nTel. {empresa_telefono}"
         ),
         "adjuntar_excel": False,
         "adjuntar_csv": False,
@@ -91,7 +91,7 @@ DEFAULTS = {
             "a efectos de la declaración anual de operaciones con terceras personas (Modelo 347).\n\n"
             "Le agradeceríamos que, en caso de existir alguna discrepancia, nos lo indicara lo antes posible. "
             "En caso de no recibir respuesta, tomaremos estos datos como correctos y procederemos a su declaración.\n\n"
-            "Un saludo,\n{empresa}\nDpto. Administración"
+            "Un saludo,\n{empresa}\nDpto. Administración\nTel. {empresa_telefono}"
         ),
     },
     "modelo347": {
