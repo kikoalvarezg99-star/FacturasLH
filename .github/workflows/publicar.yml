@@ -1,0 +1,70 @@
+name: Publicar versión
+
+# Cómo publicar una actualización:
+#   GitHub > pestaña "Actions" > "Publicar versión" > "Run workflow"
+#   Escribe el número de versión (por ejemplo 1.0.1) y qué cambia.
+# Al terminar (unos 4 minutos) los programas instalados en la tienda lo detectan
+# y se actualizan solos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Número de versión nueva (ej. 1.0.1). Debe ser mayor que la anterior."
+        required: true
+      notas:
+        description: "Qué cambia en esta versión"
+        required: false
+        default: "Mejoras y correcciones."
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fijar número de versión
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME}"; fi
+          V="${V#v}"; V="${V#V}"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          sed -i "s/^VERSION = .*/VERSION = \"$V\"/" app/version.py
+          cat app/version.py
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Comprobar que el programa arranca
+        run: python -c "import app.interfaz, app.lector, app.informe, app.correo, app.actualizador; print('ok')"
+
+      - name: Crear FacturasLH.exe
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name FacturasLH
+          --icon assets/logo.ico
+          --add-data "assets;assets"
+          --collect-all pypdfium2
+          --collect-all pypdfium2_raw
+          --hidden-import keyring.backends.Windows
+          main.py
+
+      - name: Publicar en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Facturas LH ${{ env.VERSION }}
+          body: ${{ inputs.notas || 'Mejoras y correcciones.' }}
+          files: dist/FacturasLH.exe
+          make_latest: true
