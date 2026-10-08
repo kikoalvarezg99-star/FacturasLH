@@ -125,7 +125,8 @@ _EXACTOS = {
     "% retencion": "irpf_pct", "tipo irpf": "irpf_pct",
     "irpf": "irpf", "retencion": "irpf", "ret": "irpf", "cuota irpf": "irpf",
     "total": "total", "total factura": "total", "importe total": "total", "liquido": "total",
-    "importe": "total", "total fra": "total",
+    "importe": "total", "total fra": "total", "pvp": "total", "total pvp": "total",
+    "vencim": None, "vencimiento": None, "f vencimiento": None, "margen": None, "fl": None,
 }
 
 
@@ -135,6 +136,8 @@ def campo_de_cabecera(texto: str) -> Optional[str]:
         return None
     if n in _EXACTOS:
         return _EXACTOS[n]
+    if n.startswith("venc") or n.startswith("margen") or n.startswith("benef"):
+        return None
     tiene = lambda *ps: any(p in n.split() or p in n for p in ps)  # noqa: E731
     pct = "%" in n or "porc" in n or n.startswith("tipo ") or n.startswith("t ")
     if "iva" in n.split():
@@ -168,6 +171,14 @@ def campo_de_cabecera(texto: str) -> Optional[str]:
     return None
 
 
+def ajustar_campos(campos: list[Optional[str]]) -> list[Optional[str]]:
+    """Si no hay columna de número de factura pero sí 'Código' y 'Cliente',
+    el código es el número de factura (p. ej. Diario de facturación ampliado)."""
+    if "numero" not in campos and "cod_cliente" in campos and "cliente" in campos:
+        return ["numero" if c == "cod_cliente" else c for c in campos]
+    return campos
+
+
 def es_cabecera(campos: list[Optional[str]]) -> bool:
     c = set(x for x in campos if x)
     return len(c) >= 3 and bool(c & {"fecha", "numero"}) and bool(c & {"base", "total"})
@@ -182,22 +193,48 @@ class Diario:
     facturas: list[Factura] = field(default_factory=list)
     clientes: dict[str, Cliente] = field(default_factory=dict)
     avisos: list[str] = field(default_factory=list)
+    desde: Optional[date] = None  # periodo indicado en el diario (Desde: / Hasta:)
+    hasta: Optional[date] = None
 
     @property
     def fecha_desde(self) -> Optional[date]:
+        if self.desde:
+            return self.desde
         fs = [f.fecha for f in self.facturas if f.fecha]
         return min(fs) if fs else None
 
     @property
     def fecha_hasta(self) -> Optional[date]:
+        if self.hasta:
+            return self.hasta
         fs = [f.fecha for f in self.facturas if f.fecha]
         return max(fs) if fs else None
 
+    def _indice(self) -> dict[str, list[Factura]]:
+        idx = self.__dict__.get("_idx")
+        if idx is None or self.__dict__.get("_idx_n") != len(self.facturas):
+            def orden(f):
+                dig = re.findall(r"\d+", f.numero)
+                return (f.fecha or date.min, int(dig[-1]) if dig else 0, f.numero)
+            idx = {}
+            for f in self.facturas:
+                idx.setdefault(f.cliente_clave, []).append(f)
+            for lista in idx.values():
+                lista.sort(key=orden)
+            self.__dict__["_idx"], self.__dict__["_idx_n"] = idx, len(self.facturas)
+        return idx
+
     def facturas_de(self, clave: str) -> list[Factura]:
-        def orden(f):
-            dig = re.findall(r"\d+", f.numero)
-            return (f.fecha or date.min, int(dig[-1]) if dig else 0, f.numero)
-        return sorted((f for f in self.facturas if f.cliente_clave == clave), key=orden)
+        return list(self._indice().get(clave, []))
+
+    def filtrar(self, desde: Optional[date], hasta: Optional[date]) -> "Diario":
+        """Copia del diario con solo las facturas del periodo indicado."""
+        fs = [f for f in self.facturas
+              if (not desde or (f.fecha and f.fecha >= desde)) and (not hasta or (f.fecha and f.fecha <= hasta))]
+        claves = {f.cliente_clave for f in fs}
+        return Diario(archivo=self.archivo, facturas=fs,
+                      clientes={k: c for k, c in self.clientes.items() if k in claves},
+                      avisos=self.avisos, desde=desde or self.desde, hasta=hasta or self.hasta)
 
     def to_dict(self) -> dict:
         return {
@@ -205,6 +242,8 @@ class Diario:
             "facturas": [f.to_dict() for f in self.facturas],
             "clientes": {k: c.to_dict() for k, c in self.clientes.items()},
             "avisos": self.avisos,
+            "desde": self.desde.isoformat() if self.desde else None,
+            "hasta": self.hasta.isoformat() if self.hasta else None,
         }
 
     @classmethod
@@ -214,6 +253,8 @@ class Diario:
             facturas=[Factura.from_dict(x) for x in d.get("facturas", [])],
             clientes={k: Cliente.from_dict(v) for k, v in d.get("clientes", {}).items()},
             avisos=d.get("avisos", []),
+            desde=date.fromisoformat(d["desde"]) if d.get("desde") else None,
+            hasta=date.fromisoformat(d["hasta"]) if d.get("hasta") else None,
         )
 
 
@@ -243,17 +284,20 @@ def _frases(linea: list[dict], hueco: float = 4.5) -> list[dict]:
 
 def _cabecera_pdf(linea: list[dict]) -> Optional[list[dict]]:
     celdas = _frases(linea)
-    campos = [campo_de_cabecera(c["text"]) for c in celdas]
+    campos = ajustar_campos([campo_de_cabecera(c["text"]) for c in celdas])
     if not es_cabecera(campos):
         # segundo intento: cada palabra como celda propia
         celdas = [{"text": w["text"], "x0": w["x0"], "x1": w["x1"]} for w in linea]
-        campos = [campo_de_cabecera(c["text"]) for c in celdas]
+        campos = ajustar_campos([campo_de_cabecera(c["text"]) for c in celdas])
         if not es_cabecera(campos):
             return None
     cols = []
     vistos = set()
-    for c, campo in zip(celdas, campos):
+    for i, (c, campo) in enumerate(zip(celdas, campos)):
         if not campo:
+            # columna que no nos interesa (vencimiento, margen…): se conserva para
+            # que sus datos no se cuelen en la columna de al lado
+            cols.append({"campo": f"_col{i}", "x0": c["x0"], "x1": c["x1"]})
             continue
         if campo in vistos:  # segunda columna "IVA" suele ser la cuota
             if campo == "iva_pct":
@@ -269,6 +313,9 @@ def _cabecera_pdf(linea: list[dict]) -> Optional[list[dict]]:
     return cols
 
 
+_TEXTO = {"cliente", "nif", "tipo", "serie", "cod_cliente"}
+
+
 def _asignar(cols: list[dict], w: dict) -> Optional[str]:
     mejor, mejor_sol = None, 0.0
     for c in cols:
@@ -277,6 +324,12 @@ def _asignar(cols: list[dict], w: dict) -> Optional[str]:
             mejor, mejor_sol = c["campo"], sol
     if mejor:
         return mejor
+    # Dentro del hueco de una columna de texto (p. ej. un teléfono en el nombre del
+    # cliente) pertenece a esa columna aunque parezca un número.
+    orden = sorted(cols, key=lambda c: c["x0"])
+    for c, sig in zip(orden, orden[1:]):
+        if c["campo"] in _TEXTO and w["x0"] >= c["x0"] - 2 and w["x1"] <= sig["x0"] - 1:
+            return c["campo"]
     # Sin solape: el texto se alinea a la izquierda (columna que empieza antes)
     # y los importes a la derecha (columna que termina después).
     centro = (w["x0"] + w["x1"]) / 2
@@ -288,6 +341,74 @@ def _asignar(cols: list[dict], w: dict) -> Optional[str]:
     return min(cols, key=lambda c: min(abs(centro - c["x0"]), abs(centro - c["x1"])))["campo"]
 
 
+_NUMERICOS = {"base", "iva_pct", "iva", "re_pct", "re", "irpf_pct", "irpf", "total"}
+
+
+def _es_ancla(linea: list[dict]) -> bool:
+    """Línea principal de una factura: la que lleva la fecha."""
+    return any(parse_fecha(w["text"]) for w in linea)
+
+
+def _importes(linea: list[dict], cols: list[dict]) -> int:
+    return sum(1 for w in linea if parse_importe(w["text"]) is not None and _asignar(cols, w) in _NUMERICOS)
+
+
+def _es_pegable(linea: list[dict], texto: str, cols: list[dict]) -> bool:
+    """Trozo de una fila partida en varias líneas (p. ej. nombre largo del cliente)."""
+    if _importes(linea, cols) > 1:
+        return False
+    n = normalizar(texto)
+    if re.match(r"^(sub)?total|^suma|^totales", n) or _RE_ETIQUETA_CLIENTE.match(texto) or buscar_nif(texto):
+        return False
+    if sum(1 for w in linea if campo_de_cabecera(w["text"])) >= 2:
+        return False
+    return True
+
+
+def _a_fila(trozos: list[list[dict]], cols: list[dict]) -> dict:
+    partes: dict[str, list[str]] = {}
+    for linea in trozos:
+        for w in linea:
+            partes.setdefault(_asignar(cols, w), []).append(w["text"])
+    fila: dict = {"_texto": " ".join(" ".join(w["text"] for w in l) for l in trozos)}
+    for campo, ps in partes.items():
+        fila[campo] = ("" if campo in _NUMERICOS else " ").join(ps)
+    return fila
+
+
+def _volcar(pendientes: list[dict], filas: list[dict]) -> None:
+    """Convierte las líneas de una página en filas, uniendo las líneas partidas a su
+    línea principal más cercana (los PDF centran en vertical las celdas de una línea)."""
+    if not pendientes:
+        return
+    anclas = [i for i, p in enumerate(pendientes) if _es_ancla(p["linea"])]
+    tops = [pendientes[i]["top"] for i in anclas]
+    saltos = sorted(b - a for a, b in zip(tops, tops[1:]) if b > a)
+    paso = saltos[len(saltos) // 2] if saltos else 14.0
+    umbral = max(3.0, paso * 0.45)
+    grupos: dict[int, list[int]] = {i: [i] for i in anclas}
+    sueltas = []
+    for i, p in enumerate(pendientes):
+        if i in grupos:
+            continue
+        if anclas and _es_pegable(p["linea"], p["texto"], p["cols"]):
+            j = min(anclas, key=lambda a: abs(pendientes[a]["top"] - p["top"]))
+            if abs(pendientes[j]["top"] - p["top"]) <= umbral and pendientes[j]["cols"] is p["cols"]:
+                grupos[j].append(i)
+                continue
+        sueltas.append(i)
+    salida = []
+    for j, miembros in grupos.items():
+        miembros.sort(key=lambda k: pendientes[k]["top"])
+        salida.append((pendientes[j]["top"], _a_fila([pendientes[k]["linea"] for k in miembros], pendientes[j]["cols"])))
+    for i in sueltas:
+        p = pendientes[i]
+        salida.append((p["top"], _a_fila([p["linea"]], p["cols"])))
+    salida.sort(key=lambda x: x[0])
+    filas.extend(f for _, f in salida)
+    pendientes.clear()
+
+
 def _filas_pdf(ruta: Path) -> list[dict]:
     import pdfplumber
 
@@ -295,21 +416,21 @@ def _filas_pdf(ruta: Path) -> list[dict]:
     cols = None
     with pdfplumber.open(str(ruta)) as pdf:
         for pagina in pdf.pages:
+            pendientes: list[dict] = []
             palabras = pagina.extract_words(x_tolerance=1.5, y_tolerance=2, keep_blank_chars=False)
             for linea in _agrupar_lineas(palabras):
                 texto = " ".join(w["text"] for w in linea)
                 cab = _cabecera_pdf(linea)
                 if cab:
+                    _volcar(pendientes, filas)
                     cols = cab
                     continue
                 if cols is None:
                     filas.append({"_texto": texto})
                     continue
-                fila: dict = {"_texto": texto}
-                for w in linea:
-                    campo = _asignar(cols, w)
-                    fila[campo] = (fila.get(campo, "") + " " + w["text"]).strip()
-                filas.append(fila)
+                pendientes.append({"top": linea[0]["top"], "linea": linea, "texto": texto, "cols": cols})
+            _volcar(pendientes, filas)
+            pagina.flush_cache()
     return filas
 
 
@@ -323,7 +444,7 @@ def _filas_tabla(tabla: list[list]) -> list[dict]:
         celdas = ["" if v is None else v for v in registro]
         if not any(str(c).strip() for c in celdas):
             continue
-        campos = [campo_de_cabecera(str(c)) if isinstance(c, str) else None for c in celdas]
+        campos = ajustar_campos([campo_de_cabecera(str(c)) if isinstance(c, str) else None for c in celdas])
         if es_cabecera(campos):
             vistos, cab = set(), []
             for campo in campos:
@@ -465,10 +586,36 @@ def _completar_linea(base, iva_pct, iva, re_pct, re_c) -> LineaImpuesto:
                          re_pct=re_pct or 0.0, re=r2(re_c or 0.0))
 
 
+_COMBINACIONES = [(21.0, 0.0), (10.0, 0.0), (5.0, 0.0), (4.0, 0.0), (2.0, 0.0), (0.0, 0.0),
+                  (21.0, 5.2), (10.0, 1.4), (5.0, 0.62), (4.0, 0.5)]
+
+
+def _linea_desde_total(base: float, total: float, irpf: float) -> LineaImpuesto:
+    """Cuando el diario solo trae Base y Total (PVP), deduce IVA y recargo."""
+    diff = total - base + abs(irpf or 0.0)
+    if not base:
+        return LineaImpuesto(base=0.0, iva=r2(diff))
+    calc = diff / base * 100
+    tol = max(0.35, 1.0 / abs(base) + 0.05)
+    piva, pre = min(_COMBINACIONES, key=lambda c: abs(calc - c[0] - c[1]))
+    if abs(calc - piva - pre) > tol:
+        return LineaImpuesto(base=r2(base), iva_pct=r2(calc), iva=r2(diff))  # varios tipos
+    if not pre:
+        return LineaImpuesto(base=r2(base), iva_pct=piva, iva=r2(diff))
+    iva = r2(base * piva / 100)
+    return LineaImpuesto(base=r2(base), iva_pct=piva, iva=iva, re_pct=pre, re=r2(diff - iva))
+
+
+def _nombre_clave(nombre: str) -> str:
+    return " ".join((nombre or "").upper().split())
+
+
 def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
     diario = Diario(archivo=archivo)
     actual_cli: Optional[tuple[str, str, str]] = None
     fact: Optional[Factura] = None
+    id_actual: tuple = ()
+    datos_cli: list[tuple[Factura, str, str, str]] = []
     totales_linea: list[float] = []
     total_cab: Optional[float] = None
     cif_empresa = buscar_nif(cfg.get("empresa", {}).get("cif", ""))
@@ -498,7 +645,11 @@ def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
         fact, totales_linea, total_cab = None, [], None
 
     for fila in filas:
-        campos = set(k for k in fila if not k.startswith("_"))
+        mp = re.match(r"^\s*(desde|hasta)\s*(?:fecha)?\s*:?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s*$",
+                      fila.get("_texto", ""), re.I)
+        if mp and not diario.facturas and fact is None:
+            setattr(diario, mp.group(1).lower(), parse_fecha(mp.group(2)))
+            continue
         if _es_total(fila):
             cerrar()
             continue
@@ -517,6 +668,8 @@ def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
             if cli:
                 cerrar()
                 actual_cli = cli
+            elif sum(1 for w in fila.get("_texto", "").split() if campo_de_cabecera(w)) >= 2:
+                cerrar()  # bloque de totales / resumen al final del diario
             continue
 
         valores = {k: parse_importe(fila.get(k)) for k in
@@ -525,12 +678,21 @@ def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
         serie = _texto(fila, "serie")
         num_completo = f"{serie}-{numero}" if serie and not numero.upper().startswith(serie.upper()) else numero
 
-        nueva = bool(numero) and (fact is None or num_completo != fact.numero)
+        if ("iva" not in fila and "iva_pct" not in fila and total is not None
+                and base is not None and not linea.re):
+            linea = _linea_desde_total(base, total, parse_importe(fila.get("irpf")) or 0.0)
+
+        ident = (_texto(fila, "tipo").lower(), num_completo, fecha)
+        nueva = bool(numero) and (fact is None or ident != id_actual)
         if nueva:
             cerrar()
             nombre = _texto(fila, "cliente")
             nif = buscar_nif(_texto(fila, "nif")) or _texto(fila, "nif").upper()
             cod = _texto(fila, "cod_cliente")
+            if not cod:
+                mc = re.match(r"^\s*(\d+)\s+-\s*(.*)$", nombre)  # "4399 - FLUHIDRA, S.L."
+                if mc:
+                    cod, nombre = mc.group(1), mc.group(2).strip()
             if not (nombre or nif or cod) and actual_cli:
                 nombre, nif, cod = actual_cli
             if not nif and nombre:
@@ -540,12 +702,11 @@ def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
             sin_cliente = not (nombre or nif or cod)
             if sin_cliente:
                 nombre = "Clientes varios (sin identificar)"
-            clave = clave_cliente(nombre, nif, cod)
-            if clave not in diario.clientes:
-                diario.clientes[clave] = Cliente(clave=clave, nombre=nombre, nif=nif, codigo=cod)
             serie_tipo = serie or re.match(r"^[A-Za-z]*", numero).group(0)
             tipo = detectar_tipo(_texto(fila, "tipo"), serie_tipo, total or linea.base, sin_cliente, cfg)
-            fact = Factura(numero=num_completo, fecha=fecha, tipo=tipo, cliente_clave=clave)
+            fact = Factura(numero=num_completo, fecha=fecha, tipo=tipo)
+            datos_cli.append((fact, nombre, nif, cod))
+            id_actual = ident
             total_cab = total
         elif fact is None:
             continue
@@ -560,6 +721,20 @@ def filas_a_diario(filas: list[dict], archivo: str, cfg: dict) -> Diario:
             fact.irpf = r2(fact.irpf + abs(irpf))
             fact.irpf_pct = irpf_pct or fact.irpf_pct
     cerrar()
+
+    # Clientes: por NIF; si no hay, por código. Un código usado con nombres distintos
+    # (p. ej. 0 o 9999 = "clientes de contado") se separa por nombre.
+    nombres_por_cod: dict[str, set] = {}
+    for _, nombre, nif, cod in datos_cli:
+        if cod and not nif:
+            nombres_por_cod.setdefault(cod, set()).add(_nombre_clave(nombre))
+    for f, nombre, nif, cod in datos_cli:
+        generico = bool(cod) and len(nombres_por_cod.get(cod, ())) > 1
+        clave = clave_cliente(nombre, nif, "" if generico else cod)
+        f.cliente_clave = clave
+        if clave not in diario.clientes:
+            diario.clientes[clave] = Cliente(clave=clave, nombre=nombre, nif=nif,
+                                             codigo="" if generico else cod)
 
     if not diario.facturas:
         diario.avisos.append(

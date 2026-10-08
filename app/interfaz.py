@@ -426,6 +426,7 @@ class PaginaDiarios(Pagina):
         pie = tk.Frame(izq, bg=C["tarjeta"])
         pie.pack(fill="x", padx=12, pady=(0, 12))
         Boton(pie, "Ver original", self.ver_original).pack(side="left")
+        Boton(pie, "Releer", self.releer).pack(side="left", padx=6)
         Boton(pie, "Eliminar", self.eliminar_diario, "peligro").pack(side="right")
         cuerpo.add(izq, weight=1)
 
@@ -444,6 +445,27 @@ class PaginaDiarios(Pagina):
         self.lbl_diario_info.pack(side="left", padx=12)
         self.lbl_avisos = tk.Label(self.t_cli, text="", bg=C["aviso_fondo"], fg=C["aviso"],
                                    font=(FUENTE, 9), anchor="w", justify="left", padx=10, pady=6)
+
+        filtro = tk.Frame(self.t_cli, bg=C["tarjeta"])
+        filtro.pack(fill="x", padx=16, pady=(4, 2))
+        self.filtro = filtro
+        tk.Label(filtro, text="Periodo  desde", bg=C["tarjeta"], fg=C["suave"], font=(FUENTE, 9)).pack(side="left")
+        self.v_desde, self.v_hasta, self.v_busca = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        e1 = ttk.Entry(filtro, textvariable=self.v_desde, width=11)
+        e1.pack(side="left", padx=(6, 6))
+        tk.Label(filtro, text="hasta", bg=C["tarjeta"], fg=C["suave"], font=(FUENTE, 9)).pack(side="left")
+        e2 = ttk.Entry(filtro, textvariable=self.v_hasta, width=11)
+        e2.pack(side="left", padx=6)
+        for e in (e1, e2):
+            e.bind("<Return>", lambda ev: self.aplicar_filtro())
+        Boton(filtro, "Aplicar", self.aplicar_filtro).pack(side="left", padx=(0, 4))
+        Boton(filtro, "Mes anterior", lambda: self._mes(-1)).pack(side="left", padx=4)
+        Boton(filtro, "Este mes", lambda: self._mes(0)).pack(side="left", padx=4)
+        Boton(filtro, "Todo", lambda: self._mes(None)).pack(side="left", padx=4)
+        busca = ttk.Entry(filtro, textvariable=self.v_busca, width=18)
+        busca.pack(side="right")
+        tk.Label(filtro, text="Buscar", bg=C["tarjeta"], fg=C["suave"], font=(FUENTE, 9)).pack(side="right", padx=6)
+        self.v_busca.trace_add("write", lambda *a: self._pintar_clientes())
 
         barra = tk.Frame(self.t_cli, bg=C["tarjeta"])
         barra.pack(fill="x", padx=16, pady=(6, 8))
@@ -480,7 +502,8 @@ class PaginaDiarios(Pagina):
 
         self.vacio = tk.Label(self.t_cli, text="", bg=C["tarjeta"], fg=C["suave"], font=(FUENTE, 11))
         self.ident = None
-        self.diario = None
+        self.diario = None      # vista filtrada por periodo
+        self.completo = None    # diario completo
 
     def al_mostrar(self):
         self.recargar()
@@ -500,7 +523,7 @@ class PaginaDiarios(Pagina):
                 tags += ("aviso",)
             self.tv_diarios.insert("", "end", iid=m["id"], values=(periodo, rec, m["num_facturas"]), tags=tags)
         if not lista:
-            self.ident, self.diario = None, None
+            self.ident, self.diario, self.completo = None, None, None
             self.lbl_diario.config(text="Todavía no hay diarios")
             self.lbl_diario_info.config(text="Configura el correo o pulsa «Importar diario» para cargar uno.")
             self._pintar_clientes()
@@ -518,19 +541,54 @@ class PaginaDiarios(Pagina):
         if sel[0] == self.ident and not forzar:
             return
         self.ident = sel[0]
-        self.diario = self.app.almacen.diario(self.ident)
-        meta = self.app.almacen.meta(self.ident)
-        periodo = texto_periodo(self.diario.fecha_desde, self.diario.fecha_hasta)
-        self.lbl_diario.config(text=f"Diario {periodo}" if periodo else "Diario")
-        origen = "recibido por correo" if meta.get("origen") == "correo" else "importado a mano"
-        self.lbl_diario_info.config(text=f"{len(self.diario.facturas)} facturas · {len(self.diario.clientes)} clientes · "
-                                         f"{meta.get('archivo', '')} ({origen})")
+        self.completo = self.app.almacen.diario(self.ident)
+        self.diario = self.completo
+        self.v_desde.set(fecha_es(self.completo.fecha_desde))
+        self.v_hasta.set(fecha_es(self.completo.fecha_hasta))
+        self._cabecera_diario()
         if self.diario.avisos:
             self.lbl_avisos.config(text="⚠  " + "\n⚠  ".join(self.diario.avisos))
             self.lbl_avisos.pack(fill="x", padx=16, pady=(4, 0), after=self.lbl_diario.master)
         else:
             self.lbl_avisos.pack_forget()
         self._pintar_clientes()
+
+    def _cabecera_diario(self):
+        meta = self.app.almacen.meta(self.ident)
+        periodo = texto_periodo(self.diario.fecha_desde, self.diario.fecha_hasta)
+        self.lbl_diario.config(text=f"Diario {periodo}" if periodo else "Diario")
+        origen = "recibido por correo" if meta.get("origen") == "correo" else "importado a mano"
+        self.lbl_diario_info.config(text=f"{len(self.diario.facturas)} facturas · {len(self.diario.clientes)} clientes · "
+                                         f"{origen}")
+
+    def aplicar_filtro(self):
+        if not self.completo:
+            return
+        from .lector import parse_fecha
+        d = parse_fecha(self.v_desde.get().strip()) if self.v_desde.get().strip() else None
+        h = parse_fecha(self.v_hasta.get().strip()) if self.v_hasta.get().strip() else None
+        if (self.v_desde.get().strip() and not d) or (self.v_hasta.get().strip() and not h):
+            messagebox.showwarning(NOMBRE_APP, "Escribe las fechas como dd/mm/aaaa.", parent=self)
+            return
+        self.diario = self.completo.filtrar(d, h) if (d or h) else self.completo
+        self._cabecera_diario()
+        self._pintar_clientes()
+
+    def _mes(self, desplazamiento):
+        if not self.completo:
+            return
+        if desplazamiento is None:
+            self.v_desde.set(fecha_es(self.completo.fecha_desde))
+            self.v_hasta.set(fecha_es(self.completo.fecha_hasta))
+        else:
+            import calendar
+            hoy = date.today()
+            m, a = hoy.month + desplazamiento, hoy.year
+            if m < 1:
+                m, a = m + 12, a - 1
+            self.v_desde.set(fecha_es(date(a, m, 1)))
+            self.v_hasta.set(fecha_es(date(a, m, calendar.monthrange(a, m)[1])))
+        self.aplicar_filtro()
 
     def _pintar_clientes(self):
         seleccion = self.tv_cli.selection()
@@ -545,7 +603,10 @@ class PaginaDiarios(Pagina):
             c = maestro.get(clave, c)
             fs = self.diario.facturas_de(clave)
             filas.append((c.nombre.lower(), clave, c, fs))
-        for i, (_, clave, c, fs) in enumerate(sorted(filas)):
+        q = self.v_busca.get().strip().lower()
+        if q:
+            filas = [x for x in filas if q in f"{x[2].nombre} {x[2].nif} {x[2].codigo}".lower()]
+        for i, (_, clave, c, fs) in enumerate(sorted(filas, key=lambda x: x[:2])):
             env = envios.get(clave)
             enviado = datetime.fromisoformat(env[-1]["fecha"]).strftime("%d/%m %H:%M") if env else ""
             tags = ("par",) if i % 2 else ()
@@ -597,10 +658,12 @@ class PaginaDiarios(Pagina):
         menu.tk_popup(evento.x_root, evento.y_root)
 
     def _cambiar_tipo(self, numero, tipo):
-        for f in self.diario.facturas:
-            if f.numero == numero:
-                f.tipo = tipo
-        self.app.almacen.guardar_diario(self.ident, self.diario)
+        fila = self.tv_fact.selection()
+        indice = int(fila[0].rsplit("|", 1)[1]) if fila else -1
+        facts = self.diario.facturas_de(self._clave())
+        if 0 <= indice < len(facts):
+            facts[indice].tipo = tipo  # mismo objeto en el diario completo
+        self.app.almacen.guardar_diario(self.ident, self.completo)
         self._cliente_elegido()
 
     # -------------------------------------------------------- acciones
@@ -719,17 +782,46 @@ class PaginaDiarios(Pagina):
                                                        ("Todos", "*.*")])
         if not rutas:
             return
-        ultimo = None
-        for r in rutas:
-            try:
-                ultimo, d = self.app.almacen.procesar(r, self.app.cfg, "manual")
-                tipo = "aviso" if d.avisos else "ok"
+        almacen, cfg = self.app.almacen, self.app.cfg
+        self.app.notificar("Leyendo el diario… (los diarios grandes tardan hasta un minuto)", "info", 60)
+
+        def trabajo():
+            res = []
+            for r in rutas:
+                try:
+                    ident, d = almacen.procesar(r, cfg, "manual")
+                    res.append((r, ident, d, None))
+                except Exception as e:  # noqa: BLE001
+                    res.append((r, None, None, e))
+            return res
+
+        def fin(res):
+            ultimo = None
+            for r, ident, d, err in res:
+                if err:
+                    self.app.error(f"No se pudo leer {Path(r).name}:\n{err}")
+                    continue
+                ultimo = ident
                 self.app.notificar(f"{Path(r).name}: {len(d.facturas)} facturas de {len(d.clientes)} clientes."
-                                   + ("\n" + "\n".join(d.avisos) if d.avisos else ""), tipo)
-            except Exception as e:  # noqa: BLE001
-                self.app.error(f"No se pudo leer {Path(r).name}:\n{e}")
-        if ultimo:
-            self.recargar(seleccionar=ultimo)
+                                   + ("\n" + "\n".join(d.avisos) if d.avisos else ""),
+                                   "aviso" if d.avisos else "ok")
+            if ultimo:
+                self.recargar(seleccionar=ultimo)
+
+        self.app.en_fondo(trabajo, fin)
+
+    def releer(self):
+        if not self.ident:
+            return
+        ident, almacen, cfg = self.ident, self.app.almacen, self.app.cfg
+        self.app.notificar("Volviendo a leer el diario…", "info", 60)
+
+        def fin(d):
+            self.app.notificar(f"✔ {len(d.facturas)} facturas de {len(d.clientes)} clientes.",
+                               "aviso" if d.avisos else "ok")
+            self.recargar(seleccionar=ident)
+
+        self.app.en_fondo(lambda: almacen.reprocesar(ident, cfg), fin)
 
     def ver_original(self):
         if self.ident:
@@ -953,7 +1045,8 @@ class PaginaClientes(Pagina):
 
     def __init__(self, master, app):
         super().__init__(master, app, "Clientes",
-                         "Se crean solos al leer los diarios. Completa su email y dirección para que salgan en el PDF.")
+                         "Se crean solos al leer los diarios. Importa la ficha de clientes del programa de gestión para tener sus emails, NIF y direcciones.")
+        Boton(self.acciones, "Importar clientes (CSV / Excel)", self.importar, "primario", icono="+").pack(side="right")
         cuerpo = tk.Frame(self, bg=C["fondo"])
         cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 24))
         izq = Tarjeta(cuerpo)
@@ -985,6 +1078,21 @@ class PaginaClientes(Pagina):
 
     def al_mostrar(self):
         self.pintar()
+
+    def importar(self):
+        ruta = filedialog.askopenfilename(parent=self, title="Fichero de clientes exportado del programa de gestión",
+                                          filetypes=[("Clientes", "*.csv *.txt *.xlsx"), ("Todos", "*.*")])
+        if not ruta:
+            return
+        almacen = self.app.almacen
+
+        def fin(r):
+            self.pintar()
+            self.app.paginas["diarios"]._pintar_clientes()
+            messagebox.showinfo(NOMBRE_APP, f"Clientes importados.\n\nNuevos: {r['nuevos']}\nActualizados: {r['actualizados']}\n"
+                                f"Con email: {r['con_email']}\nOmitidos (clientes varios / de baja): {r['omitidos']}", parent=self)
+
+        self.app.en_fondo(lambda: almacen.importar_clientes(ruta), fin)
 
     def pintar(self):
         sel = self.clave

@@ -38,8 +38,16 @@ En **Configuración**:
   correos con el diario se muevan ahí automáticamente.
 - Marca **Abrir el programa al iniciar Windows** para que esté siempre revisando el correo.
 
-En **Clientes** completa el email y la dirección de cada cliente (se crean solos al leer los
-diarios). Al enviar un email también puedes guardarlo en la ficha.
+En **Clientes → Importar clientes (CSV / Excel)** carga la ficha de clientes exportada del
+programa de gestión: así cada listado lleva el NIF, la dirección y el email del cliente.
+Se puede repetir cuando haya clientes nuevos (actualiza sin duplicar). Al enviar un email
+también puedes guardar la dirección en la ficha.
+
+## Elegir el periodo
+
+El diario puede abarcar todo el año. En la pantalla *Diarios* escribe las fechas *desde / hasta*
+o pulsa **Mes anterior**, **Este mes** o **Todo**: la lista de clientes, los PDF y los emails
+se ajustan a ese periodo.
 
 ## Publicar una actualización
 
@@ -56,6 +64,8 @@ El lector no depende de un programa de gestión concreto. Busca la fila de cabec
 y reconoce:
 
 - Diarios con una fila por factura y el cliente en una columna.
+- El *Diario de facturación ampliado* (Tipo, Código, Fecha, Vencim., Cliente, Base, PVP…):
+  el IVA se calcula a partir de Base y PVP y detecta el recargo de equivalencia.
 - Diarios agrupados por cliente (`Cliente: 4300101 NOMBRE … NIF …`) con subtotales.
 - Facturas con varios tipos de IVA en líneas consecutivas.
 - PDF, Excel (.xlsx) y CSV.
